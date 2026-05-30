@@ -16,6 +16,7 @@ import 'dotenv/config';
 import * as fs from 'fs';
 import * as path from 'path';
 import { fileURLToPath } from 'url';
+import { postReel, postStory } from './ig-reels-stories.ts';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -33,8 +34,17 @@ const ACCOUNTS: Account[] = [
 
 // ─── BATCH 投稿定義 (W22: 5/26-6/1) ───────────────────
 // バッチ MD: yori/affiliate-ig-batch-w22-2026-05-25.md と同期
-type Post = { type: 'persona' | 'industry' | 'pr'; caption: string; variant?: 'A' | 'B' | 'balancer' };
-type DailyPosts = Record<string, Post | Post[]>; // date -> post or post[] (複数回投稿対応)
+type Post = {
+  type: 'persona' | 'industry' | 'pr';
+  caption: string;
+  variant?: 'A' | 'B' | 'balancer';
+  // format 省略時は 'feed'（既存バッチは無変更で feed として動く・後方互換）
+  format?: 'feed' | 'story' | 'reel';
+  // story/reel の公開メディアURL（feed は省略時 ig-image-urls.json から取得）
+  // reel = 公開動画URL(9:16/5-90s) / story = 公開画像 or 動画URL
+  media_url?: string;
+};
+type DailyPosts = Record<string, Post | Post[]>; // date -> post or post[] (複数フォーマット/複数回投稿対応)
 
 const BATCH_POSTS: Record<string, DailyPosts> = {
   A1: {
@@ -691,79 +701,96 @@ async function main() {
       continue;
     }
     const candidates: Post[] = Array.isArray(rawEntry) ? rawEntry : [rawEntry];
+    // format で振り分け。format 省略は feed（既存バッチ後方互換）。
+    const feeds   = candidates.filter(p => (p.format ?? 'feed') === 'feed');
+    const stories = candidates.filter(p => p.format === 'story');
+    const reels   = candidates.filter(p => p.format === 'reel');
 
-    let post: Post | null = null;
-    let captionHash = '';
-    for (const candidate of candidates) {
-      const candHash = hashText(candidate.caption);
-      if (!isDuplicate(acc.id, candHash, log)) {
-        post = candidate;
-        captionHash = candHash;
-        break;
+    // ===== FEED（既存挙動。IIFEで包み feed の早期return が story/reel をスキップしないように） =====
+    await (async () => {
+      if (!feeds.length) return;
+      let post: Post | null = null;
+      let captionHash = '';
+      for (const candidate of feeds) {
+        const candHash = hashText(candidate.caption);
+        if (!isDuplicate(acc.id, candHash, log)) { post = candidate; captionHash = candHash; break; }
       }
-    }
-    if (!post) {
-      console.log(`⏭️  ${acc.id} @${acc.handle.padEnd(20)} 本日分は全文面投稿済み`);
-      continue;
+      if (!post) { console.log(`⏭️  ${acc.id} @${acc.handle.padEnd(20)} feed:本日分は投稿済み`); return; }
+      const guards = runGuards(post);
+      if (!guards.ok) {
+        console.log(`❌ ${acc.id} @${acc.handle.padEnd(20)} feed ${guards.reason}`);
+        newEntries.push({ account: acc.id, date: targetDate, type: post.type, variant: post.variant, caption: post.caption, captionHash, error: guards.reason, postedAt: new Date().toISOString() });
+        return;
+      }
+      const imageUrl = post.media_url ?? imageUrls[acc.id]?.[targetDate];
+      if (!imageUrl) {
+        console.log(`❌ ${acc.id} @${acc.handle.padEnd(20)} feed 画像URL未登録 (ig-image-urls.json か media_url)`);
+        newEntries.push({ account: acc.id, date: targetDate, type: post.type, variant: post.variant, caption: post.caption, captionHash, error: 'Image URL not registered', postedAt: new Date().toISOString() });
+        return;
+      }
+      if (dryRun) {
+        const tokenStatus = (acc.igUserId && acc.token) ? 'token=OK' : 'token=MISSING';
+        console.log(`✅ ${acc.id} @${acc.handle.padEnd(20)} [DRY] feed ${post.type}${post.variant ? `[${post.variant}]` : ''} cap=${graphemeLen(post.caption)}字 img=${imageUrl.slice(0, 50)}... ${tokenStatus}`);
+        return;
+      }
+      if (!acc.igUserId || !acc.token) { console.log(`❌ ${acc.id} @${acc.handle.padEnd(20)} feed IG_*_${acc.id} 未設定`); return; }
+      try {
+        console.log(`▶️  ${acc.id} @${acc.handle} feed コンテナ作成中...`);
+        const containerId = await createIgMediaContainer(acc.igUserId, acc.token, imageUrl, post.caption);
+        await waitForContainerReady(containerId, acc.token);
+        const mediaId = await publishIgMediaContainer(acc.igUserId, acc.token, containerId);
+        console.log(`✅ ${acc.id} @${acc.handle.padEnd(20)} feed ${post.type}${post.variant ? `[${post.variant}]` : ''} → https://www.instagram.com/p/${mediaId}/`);
+        newEntries.push({ account: acc.id, date: targetDate, type: post.type, variant: post.variant, caption: post.caption, captionHash, imageUrl, mediaId, postedAt: new Date().toISOString() });
+      } catch (e) {
+        const msg = (e as Error).message;
+        console.log(`❌ ${acc.id} @${acc.handle.padEnd(20)} feed ${msg.slice(0, 150)}`);
+        newEntries.push({ account: acc.id, date: targetDate, type: post.type, variant: post.variant, caption: post.caption, captionHash, imageUrl, error: msg, postedAt: new Date().toISOString() });
+      }
+      if (!dryRun) await new Promise(r => setTimeout(r, 10000));
+    })();
+
+    // ===== STORY（postStory。画像/動画の公開URL。Storyはcaption不可） =====
+    for (const story of stories) {
+      const mediaUrl = story.media_url;
+      if (!mediaUrl) { console.log(`❌ ${acc.id} @${acc.handle.padEnd(20)} story: media_url 未設定`); continue; }
+      const cHash = hashText('story:' + mediaUrl);
+      if (isDuplicate(acc.id, cHash, log)) { console.log(`⏭️  ${acc.id} @${acc.handle.padEnd(20)} story:投稿済み`); continue; }
+      const isVideo = /\.(mp4|mov|m4v)(\?|$)/i.test(mediaUrl);
+      if (dryRun) { console.log(`✅ ${acc.id} @${acc.handle.padEnd(20)} [DRY] story ${isVideo ? 'video' : 'image'}=${mediaUrl.slice(0, 50)}... ${(acc.igUserId && acc.token) ? 'token=OK' : 'token=MISSING'}`); continue; }
+      if (!acc.igUserId || !acc.token) { console.log(`❌ ${acc.id} @${acc.handle.padEnd(20)} story IG_*_${acc.id} 未設定`); continue; }
+      try {
+        const mediaId = await postStory(acc.igUserId, acc.token, isVideo ? { videoUrl: mediaUrl } : { imageUrl: mediaUrl });
+        console.log(`✅ ${acc.id} @${acc.handle.padEnd(20)} story → ${mediaId}`);
+        newEntries.push({ account: acc.id, date: targetDate, type: 'story', caption: story.caption ?? '', captionHash: cHash, imageUrl: mediaUrl, mediaId, postedAt: new Date().toISOString() });
+      } catch (e) {
+        const msg = (e as Error).message;
+        console.log(`❌ ${acc.id} @${acc.handle.padEnd(20)} story ${msg.slice(0, 150)}`);
+        newEntries.push({ account: acc.id, date: targetDate, type: 'story', caption: story.caption ?? '', captionHash: cHash, imageUrl: mediaUrl, error: msg, postedAt: new Date().toISOString() });
+      }
+      if (!dryRun) await new Promise(r => setTimeout(r, 10000));
     }
 
-    const guards = runGuards(post);
-    if (!guards.ok) {
-      console.log(`❌ ${acc.id} @${acc.handle.padEnd(20)} ${guards.reason}`);
-      newEntries.push({
-        account: acc.id, date: targetDate, type: post.type, variant: post.variant, caption: post.caption, captionHash,
-        error: guards.reason, postedAt: new Date().toISOString(),
-      });
-      continue;
+    // ===== REEL（postReel。公開動画URL + caption。法令ガード適用） =====
+    for (const reel of reels) {
+      const mediaUrl = reel.media_url;
+      if (!mediaUrl) { console.log(`❌ ${acc.id} @${acc.handle.padEnd(20)} reel: media_url 未設定`); continue; }
+      const cHash = hashText('reel:' + mediaUrl);
+      if (isDuplicate(acc.id, cHash, log)) { console.log(`⏭️  ${acc.id} @${acc.handle.padEnd(20)} reel:投稿済み`); continue; }
+      const g = runGuards(reel);
+      if (!g.ok) { console.log(`❌ ${acc.id} @${acc.handle.padEnd(20)} reel ${g.reason}`); newEntries.push({ account: acc.id, date: targetDate, type: 'reel', variant: reel.variant, caption: reel.caption, captionHash: cHash, error: g.reason, postedAt: new Date().toISOString() }); continue; }
+      if (dryRun) { console.log(`✅ ${acc.id} @${acc.handle.padEnd(20)} [DRY] reel video=${mediaUrl.slice(0, 50)}... cap=${graphemeLen(reel.caption)}字 ${(acc.igUserId && acc.token) ? 'token=OK' : 'token=MISSING'}`); continue; }
+      if (!acc.igUserId || !acc.token) { console.log(`❌ ${acc.id} @${acc.handle.padEnd(20)} reel IG_*_${acc.id} 未設定`); continue; }
+      try {
+        const mediaId = await postReel(acc.igUserId, acc.token, mediaUrl, reel.caption);
+        console.log(`✅ ${acc.id} @${acc.handle.padEnd(20)} reel → https://www.instagram.com/reel/${mediaId}/`);
+        newEntries.push({ account: acc.id, date: targetDate, type: 'reel', variant: reel.variant, caption: reel.caption, captionHash: cHash, imageUrl: mediaUrl, mediaId, postedAt: new Date().toISOString() });
+      } catch (e) {
+        const msg = (e as Error).message;
+        console.log(`❌ ${acc.id} @${acc.handle.padEnd(20)} reel ${msg.slice(0, 150)}`);
+        newEntries.push({ account: acc.id, date: targetDate, type: 'reel', variant: reel.variant, caption: reel.caption, captionHash: cHash, imageUrl: mediaUrl, error: msg, postedAt: new Date().toISOString() });
+      }
+      if (!dryRun) await new Promise(r => setTimeout(r, 10000));
     }
-
-    const imageUrl = imageUrls[acc.id]?.[targetDate];
-    if (!imageUrl) {
-      console.log(`❌ ${acc.id} @${acc.handle.padEnd(20)} 画像URL未登録 (ig-image-urls.json に追記してください)`);
-      newEntries.push({
-        account: acc.id, date: targetDate, type: post.type, variant: post.variant, caption: post.caption, captionHash,
-        error: 'Image URL not registered', postedAt: new Date().toISOString(),
-      });
-      continue;
-    }
-
-    if (dryRun) {
-      const tokenStatus = (acc.igUserId && acc.token) ? 'token=OK' : 'token=MISSING';
-      const vTag = post.variant ? `[${post.variant}]` : '';
-      console.log(`✅ ${acc.id} @${acc.handle.padEnd(20)} [DRY] ${post.type}${vTag} cap=${graphemeLen(post.caption)}字 img=${imageUrl.slice(0, 50)}... ${tokenStatus}`);
-      continue;
-    }
-
-    if (!acc.igUserId || !acc.token) {
-      console.log(`❌ ${acc.id} @${acc.handle.padEnd(20)} IG_USER_ID_${acc.id} または IG_TOKEN_${acc.id} 未設定`);
-      continue;
-    }
-
-    try {
-      console.log(`▶️  ${acc.id} @${acc.handle} メディアコンテナ作成中...`);
-      const containerId = await createIgMediaContainer(acc.igUserId, acc.token, imageUrl, post.caption);
-      console.log(`   コンテナID: ${containerId} 処理待機中...`);
-      await waitForContainerReady(containerId, acc.token);
-      console.log(`   処理完了 公開中...`);
-      const mediaId = await publishIgMediaContainer(acc.igUserId, acc.token, containerId);
-      const postUrl = `https://www.instagram.com/p/${mediaId}/`;
-      const vTag2 = post.variant ? `[${post.variant}]` : '';
-      console.log(`✅ ${acc.id} @${acc.handle.padEnd(20)} ${post.type}${vTag2} → ${postUrl}`);
-      newEntries.push({
-        account: acc.id, date: targetDate, type: post.type, variant: post.variant, caption: post.caption, captionHash,
-        imageUrl, mediaId, postedAt: new Date().toISOString(),
-      });
-    } catch (e) {
-      const msg = (e as Error).message;
-      console.log(`❌ ${acc.id} @${acc.handle.padEnd(20)} ${msg.slice(0, 150)}`);
-      newEntries.push({
-        account: acc.id, date: targetDate, type: post.type, variant: post.variant, caption: post.caption, captionHash,
-        imageUrl, error: msg, postedAt: new Date().toISOString(),
-      });
-    }
-
-    // Rate limit gentle pause between accounts (10 sec)
-    if (!dryRun) await new Promise(r => setTimeout(r, 10000));
   }
 
   if (!dryRun && newEntries.length > 0) {
