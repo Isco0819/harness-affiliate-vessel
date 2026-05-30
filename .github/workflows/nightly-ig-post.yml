@@ -1,0 +1,51 @@
+name: nightly-ig-post
+
+# 無料・常時不要・夜間自動。22:00 JST = 13:00 UTC。手動実行も可。
+on:
+  schedule:
+    - cron: '0 13 * * *'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'true=投稿せず検証のみ'
+        required: false
+        default: 'false'
+
+permissions:
+  contents: write   # dedupログをコミットし直すため
+
+jobs:
+  post:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: install
+        run: npm install
+      - name: run harness
+        env:
+          IG_USER_ID_A1: ${{ secrets.IG_USER_ID_A1 }}
+          IG_TOKEN_A1:   ${{ secrets.IG_TOKEN_A1 }}
+          IG_USER_ID_A2: ${{ secrets.IG_USER_ID_A2 }}
+          IG_TOKEN_A2:   ${{ secrets.IG_TOKEN_A2 }}
+          IG_USER_ID_A3: ${{ secrets.IG_USER_ID_A3 }}
+          IG_TOKEN_A3:   ${{ secrets.IG_TOKEN_A3 }}
+          IG_USER_ID_A4: ${{ secrets.IG_USER_ID_A4 }}
+          IG_TOKEN_A4:   ${{ secrets.IG_TOKEN_A4 }}
+          IG_USER_ID_A5: ${{ secrets.IG_USER_ID_A5 }}
+          IG_TOKEN_A5:   ${{ secrets.IG_TOKEN_A5 }}
+        run: |
+          if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then
+            npx tsx harness-ig-post.ts --dry-run
+          else
+            npx tsx harness-ig-post.ts
+          fi
+      - name: persist dedup log
+        if: always()
+        run: |
+          git config user.name "harness-bot"
+          git config user.email "harness-bot@users.noreply.github.com"
+          git add -f logs/ig-posts.json 2>/dev/null || true
+          git commit -m "log: ig posts $(date -u +%F)" 2>/dev/null && git push || echo "no log change"
