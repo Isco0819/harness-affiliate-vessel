@@ -472,5 +472,55 @@
     "captionHash": "y4pptr",
     "error": "Image URL not registered",
     "postedAt": "2026-06-08T16:41:26.588Z"
+  },
+  {
+    "account": "A1",
+    "date": "2026-06-10",
+    "type": "persona",
+    "variant": "B",
+    "caption": "「あの転職、もっと早く決めれば良かった」\n\n34歳、3社目で7年。\n2年前にやりたかったプロジェクトが、転職した同期の現在の主戦場になっている。\n\n会社に残る理由は、結局『動かない理由』を1つ作っているだけだったかもしれない、と思った話。\n\n#エンジニア転職 #30代キャリア #SE転職 #ITエンジニア #キャリアの悩み #自己分析",
+    "captionHash": "-3thcyf",
+    "error": "Image URL not registered",
+    "postedAt": "2026-06-09T15:47:55.730Z"
+  },
+  {
+    "account": "A2",
+    "date": "2026-06-10",
+    "type": "persona",
+    "variant": "B",
+    "caption": "「事業を伸ばす？それとも安定させる？」\n\n独立4年目の春、毎月の売上は安定。\nでも、5年後に同じ事業をやっている自分が想像できなかった。\n\n『安定』を求めて『時間』を失っていく恐怖が、独立して初めてわかった話。\n\n#1人起業 #ひとり社長 #フリーランス #個人事業主 #起業の悩み #事業の方向性 #自己投資",
+    "captionHash": "ve9wna",
+    "error": "Image URL not registered",
+    "postedAt": "2026-06-09T15:47:55.730Z"
+  },
+  {
+    "account": "A3",
+    "date": "2026-06-10",
+    "type": "persona",
+    "variant": "B",
+    "caption": "「もうこれ以上、ツール増やしたくない」\n\n独立5年目、SaaS が12本。\n月額合計は¥38,000、でも本当に使っているのは6本だった。\n\n『便利』より『管理コスト』が事業効率を奪う、と気づいた整理の話。\n\n#SaaS活用 #業務効率化 #1人起業 #フリーランス #ツール疲れ #ミニマル経営",
+    "captionHash": "w93909",
+    "error": "Image URL not registered",
+    "postedAt": "2026-06-09T15:47:55.730Z"
+  },
+  {
+    "account": "A4",
+    "date": "2026-06-10",
+    "type": "persona",
+    "variant": "B",
+    "caption": "「私、何も変わってない気がする」\n\n34歳の春、満員電車の窓に映った自分を見て、ふと思った。\n仕事は同じ、髪型も同じ、口癖も同じ。\n\n『変わりたい』を口にする前に、変えていい場所を3つだけ決めた、というメモの話。\n\n#30代女性 #自己投資 #ライフスタイル #自分磨き #女性キャリア #自己分析",
+    "captionHash": "o0isy",
+    "error": "Image URL not registered",
+    "postedAt": "2026-06-09T15:47:55.731Z"
+  },
+  {
+    "account": "A5",
+    "date": "2026-06-10",
+    "type": "persona",
+    "variant": "B",
+    "caption": "「私、何になりたいんだろう」\n\n27歳の春、後輩に進路相談されて、自分の答えが見つからなかった。\n\nなりたい『職業』ではなく、なりたい『状態』を3つ書き出してみた、というスタート地点の話。\n\n#20代女性 #キャリアの悩み #20代の働き方 #自己分析 #女性キャリア #自分らしさ",
+    "captionHash": "-mcrkpa",
+    "error": "Image URL not registered",
+    "postedAt": "2026-06-09T15:47:55.731Z"
   }
 ]
